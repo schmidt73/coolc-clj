@@ -1,0 +1,1 @@
+(ns coolc-clj.core)
