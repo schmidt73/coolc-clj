@@ -1,6 +1,6 @@
 # COOL Compiler in Clojure
 
-COOL is an object oriented programming language with a static
+COOL is an object oriented programming language with a static typing system
 that is *almost* a subset of Java. The compiler written here 
 is inspired by the [Stanford Compilers Course](https://lagunita.stanford.edu/courses/Engineering/Compilers/Fall2014/course/)
 which builds a COOL compiler from scratch.
@@ -19,11 +19,12 @@ in the root directory of the project.
 
 ## Differences Between Stanford Course
 
-The Stanford course makes the problem a bit easier on the students
-by giving them a a skeleton for each part of the assignment and
-having students fill in the relevant details.
+The Stanford course builds the compiler incrementally, where
+each assignment tackles one phase (e.g. parsing or lexing). Students
+are given a skeleton for each assignment and must fill in the
+relevant details.
 
-The compiler here is written completely from scratch, using no
+In contrast, the compiler here is written completely from scratch, using no
 external libraries for lexing, parsing, code generation, or
 optimization. It is also written in Clojure :) whereas the course
 expects one to use C++ (eww) or Java (less eww).

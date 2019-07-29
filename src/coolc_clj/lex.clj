@@ -30,8 +30,8 @@
    first in the sequence is used."
   [rules str]
   (let [lexes (filter #(not (nil? %)) (map #(lex-rule % str) rules))
-        sorted-lexes (sort-by #(:chop %1) > lexes)]
-    (first sorted-lexes)))
+        longest-lex (apply max-key :chop lexes)]
+    longest-lex))
 
 (defn lex
   "Takes a sequence of rules, an input string, and lexes it into a
