@@ -1,12 +1,7 @@
 grammar cool;
 
 program
-   : programBlocks
-   ;
-
-programBlocks
-   : classDefine ';' programBlocks # classes
-   | EOF # eof
+   : (classDefine ';')+ EOF
    ;
 
 classDefine

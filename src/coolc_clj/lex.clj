@@ -1,4 +1,4 @@
-(ns cooljc-clj.lex
+(ns coolc-clj.lex
   "A rule consists of a regex to match against an action
    to take upon successful regex match. This action is a function
    that takes the match and the input string as arguments and
