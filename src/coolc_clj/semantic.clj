@@ -2,79 +2,120 @@
   (:require [coolc-clj.parser :as parser]
             [clojure.walk :as walk]))
 
-(def default-class "Object")
 (def base-classes #{"IO" "Object" "String" "Int" "Bool"})
 
-(defn parse-class
-  "Parses a class form in the parse tree."
-  [class-form]
-  (let [is-method? #(= "(" (nth % 2)) 
-        is-attribute? #(= ":" (nth % 2))
-        seq-forms (filter seq? class-form)]
-    {:name (nth class-form 2)
-     :inherits (if (= "inherits" (nth class-form 3))
-                 (nth class-form 4)
-                 default-class)
-     :attributes (mapv second (filter is-attribute? seq-forms))
-     :methods (mapv second (filter is-method? seq-forms))}))
-
-(defn parse-classes
-  "Parses all the classes in the parse tree into a
-   vector."
-  [parse-tree]
-  (filterv coll?
-    (walk/prewalk
-      (fn [form]
-        (if-let [tag (and (seq? form) (first form))]
-          (cond
-            (= tag :program) (vec (rest form))
-            (= tag :classDefine) (parse-class form))
-          form))
-      parse-tree)))
+(defn get-first
+  "Returns the first item in the collection
+   satisfying some predicate or nil if not found."
+  [coll predicate]
+  (loop [current-coll coll]
+    (if-let [x (first current-coll)]
+      (if (predicate x)
+        x
+        (recur (rest current-coll))))))
 
 (defn find-class
-  [classes name]
-  (first (filter #(= name (:name %)) classes)))
+  "Finds the class with the given name in the parse
+   tree. Nil if not found."
+  [parse-tree name]
+  (get-first parse-tree #(= name (:name %))))
 
-(defn inheritance-valid?
-  "Returns true if the class inherits from a class
-   defined in classes or a base class, nil otherwise"
-  [classes class]
-  (or
-    (contains? base-classes (:inherits class))
-    (not (nil? (find-class classes (:inherits class))))))
+(defn find-parent-class
+  "Returns the closest ancestor in the inheritance hierarchy
+   or nil if not found."
+  [parse-tree class]
+  (:inherits (find-class parse-tree class)))
 
-(defn contains-cycle?
-  "Returns true if a node in the inheritance graph
-   contains a cycle."
-  [classes class]
-  (loop [current (find-class classes (:inherits class))
-         seen #{(:name class)}]
-    (cond
-      (nil? current) false
-      (contains? seen (:name current)) true
-      :otherwise (recur
-                   (find-class classes (:inherits current))
-                   (conj seen (:name current))))))
+(defn find-class-hierarchy
+  "Finds the inheritance hierarchy of the given class from
+   the current node to the root."
+  [parse-tree class-name]
+  (take-while
+    (comp not nil?)
+    (iterate #(find-parent-class parse-tree %) class-name)))
 
 (defn find-cycles
-  "Finds all cycles in an inheritance graph."
-  [classes]
-  (filter #(contains-cycle? classes %) classes))
-
-(defn verify-class-hierarchy
-  "Verifies the class hierarchy, throwing an exception if"
+  "Returns all nodes that create a cycle in the inheritance graph."
   [parse-tree]
-  (let [classes (parse-classes parse-tree)
-        undefined-inheritances (filter #(not (inheritance-valid? classes %)) classes)
-        cycles (find-cycles classes)]
-    (when (not (empty? undefined-inheritances))
-      (throw (ex-info "Undefined inheritance" {:nodes undefined-inheritances})))
+  (let [is-cyclic? #(not (apply distinct? %))]
+    (->> (map #(find-class-hierarchy parse-tree (:name %)) parse-tree)
+      (filter is-cyclic?)
+      (map first))))
+
+(defn check-cycles
+  "Verifies the inheritance graph of the parse tree does not contain
+   cycles."
+  [parse-tree]
+  (let [cycles (find-cycles parse-tree)]
     (when (not (empty? cycles))
-      (throw (ex-info "Inheritance hierarchy is cyclic." {:cycles cycles})))))
+      (throw (ex-info "Inheritance hierarchy is cyclic." {:cycles cycles})))
+    true))
+
+(defn valid-class-name?
+  "Returns true if the class has a valid name."
+  [parse-tree class]
+  (or
+    (contains? base-classes (:inherits class))
+    (not (nil? (find-class parse-tree (:inherits class))))))
+
+(defn check-class-names
+  "Verifies all class names are valid. Throws an exception if they are not."
+  [parse-tree]
+  (let [undefined-class-names (filter #(not (valid-class-name? parse-tree %)) parse-tree)]
+    (when (not (empty? undefined-class-names))
+      (throw (ex-info "Undefined class names" {:nodes undefined-class-names})))
+    true))
+
+(defn find-method
+  "Finds the method associated with the class
+   name and method name or returns nil."
+  [parse-tree class-name method-name]
+  (if-let [class (get-first parse-tree #(= (:name %) class-name))]
+    (if-let [method (get-first (:methods class) #(= (:name %) method-name))]
+      method)))
+
+(defn find-methods-hierarchy
+  "Returns the hierarchy of methods associated with
+   class and its inheritance hierarchy."
+  [parse-tree class-name method-name]
+  (let [class-hierarchy (find-class-hierarchy parse-tree class-name)
+        methods (->> class-hierarchy
+                  (map #(find-method parse-tree % method-name))
+                  (filter (comp not nil?)))]
+    (zipmap class-hierarchy methods))) 
+
+(defn eq-signatures?
+  [method1 method2]
+  (let [params1 (:params method1)
+        params2 (:params method2)
+        eq-params #(= (:type-id %1) (:type-id %2))]
+    (when (and
+            (= (:type-id method1) (:type-id method2))
+            (= (count params1) (count params2)))
+      (reduce #(and %1 %2) true (map eq-params params1 params2)))))
+
+(defn eq-signatures
+  ([m1 m2] (when (eq-signatures? m1 m2) m1))
+  ([m] m))
+
+(defn check-methods-in-class
+  "Verifies all method names are valid in a particular class.
+   Throws an exception if they are not."
+  [parse-tree class-name]
+  (let [method-names (map :name (:methods (find-class parse-tree class-name)))
+        method-hierarchys (map #(find-methods-hierarchy parse-tree class-name %) method-names)
+        bad-methods (filter #(nil? (reduce eq-signatures (vals %))) method-hierarchys)]
+    (when (not (empty? bad-methods))
+      (throw (ex-info "Methods must have same signature." {:methods bad-methods})))
+    true))
+
+(defn check-methods
+  "Checks all methods in all classes. Throws an exception if methods
+   are invalid."
+  [parse-tree]
+  (doall (map #(check-methods-in-class parse-tree (:name %)) parse-tree)))
 
 ;;;; EXAMPLES
-
 (def examples
   ["C:/Users/schmidt73/Desktop/School/Compilers/coolc-clj/examples/complex.cl"
    "C:/Users/schmidt73/Desktop/School/Compilers/coolc-clj/examples/arith.cl"
@@ -99,6 +140,16 @@
 (def io-example (slurp (nth examples 11)))
 (def io-tree (parser/parse io-example))
 
+(def lam-tree (parser/parse (slurp (nth examples 12))))
+
+(def primes-tree
+  (parser/parse
+    (slurp "C:/Users/schmidt73/Desktop/School/Compilers/coolc-clj/examples/primes.cl")))
+
+(def hw-tree (parser/parse (slurp (nth examples 10))))
+
 (doseq [example examples]
-  (let [parse-tree (parser/parse (slurp example))]
-    (verify-class-hierarchy parse-tree)))
+  (let [parse-tree (parser/parse (slurp example))]))
+
+(doseq [ptree (map (comp parser/parse slurp) examples)]
+  (check-methods ptree))
